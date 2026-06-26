@@ -24,6 +24,23 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'NightShift Runner' });
 });
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    service: '🌙 NightShift Runner',
+    status: 'running',
+    version: '1.0.0',
+    endpoints: [
+      'POST /intake  - Read GitHub issue',
+      'POST /spec    - Generate technical spec',
+      'POST /code    - Write implementation code',
+      'POST /test    - Write and validate tests',
+      'POST /deploy  - Push code to GitHub branch',
+      'POST /pr      - Open Pull Request'
+    ]
+  });
+});
+
 // ─────────────────────────────────────────
 // STAGE 1 — INTAKE: Read GitHub Issue
 // ─────────────────────────────────────────
