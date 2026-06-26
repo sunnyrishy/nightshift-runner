@@ -109,8 +109,8 @@ app.post('/spec', async (req, res) => {
     const { title, body, owner, repo } = req.body;
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 800,
       messages: [{
         role: 'user',
         content: `You are a senior software engineer writing a 
@@ -165,8 +165,8 @@ app.post('/code', async (req, res) => {
     const { spec, title } = req.body;
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 3000,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1500,
       messages: [{
         role: 'user',
         content: `You are a senior software engineer 
@@ -247,8 +247,8 @@ app.post('/test', async (req, res) => {
     const { code, filename, spec } = req.body;
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 800,
       messages: [{
         role: 'user',
         content: `You are a senior QA engineer writing 
