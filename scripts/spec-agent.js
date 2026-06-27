@@ -1,77 +1,81 @@
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 
-// Debug — print all environment variables
-console.log('=== ENVIRONMENT VARIABLES ===');
-console.log('SUPERPLANE_PAYLOAD_FILE:', process.env.SUPERPLANE_PAYLOAD_FILE);
-console.log('SUPERPLANE_RESULT_FILE:', process.env.SUPERPLANE_RESULT_FILE);
-console.log('ANTHROPIC_API_KEY set:', !!process.env.ANTHROPIC_API_KEY);
-console.log('All env keys:', Object.keys(process.env).join(', '));
-console.log('=============================');
+console.log('=== ENVIRONMENT ===');
+console.log('RESULT FILE:', process.env.SUPERPLANE_RESULT_FILE);
+console.log('API KEY SET:', !!process.env.ANTHROPIC_API_KEY);
 
-// Find payload file
-const payloadPath = process.env.SUPERPLANE_PAYLOAD_FILE;
-
-if (!payloadPath) {
-  console.error('SUPERPLANE_PAYLOAD_FILE is not set!');
-  console.log('Trying to find payload file...');
+// Check /mnt/ directory
+console.log('=== /mnt/ CONTENTS ===');
+try {
+  const mntFiles = fs.readdirSync('/mnt');
+  console.log('Files in /mnt:', mntFiles.join(', '));
   
-  // Try common locations
-  const possiblePaths = [
-    '/tmp/payload.json',
-    '/payload.json',
-    '/superplane/payload.json',
-    '/tmp/superplane_payload.json'
-  ];
-  
-  for (const p of possiblePaths) {
+  // Read each file in /mnt
+  for (const f of mntFiles) {
     try {
-      if (fs.existsSync(p)) {
-        console.log('Found payload at:', p);
-        const content = fs.readFileSync(p, 'utf8');
-        console.log('Payload preview:', content.substring(0, 200));
-      }
+      const content = fs.readFileSync(`/mnt/${f}`, 'utf8');
+      console.log(`/mnt/${f} preview:`, content.substring(0, 300));
     } catch (e) {
-      console.log('Not at:', p);
+      console.log(`Cannot read /mnt/${f}:`, e.message);
     }
   }
+} catch (e) {
+  console.log('Cannot read /mnt:', e.message);
+}
 
-  // List /tmp directory
-  console.log('Files in /tmp:');
+// Check for payload in common locations
+const possiblePayloadPaths = [
+  '/mnt/superplane-payload.json',
+  '/mnt/payload.json',
+  '/mnt/input.json',
+  '/tmp/payload.json',
+  '/superplane-payload.json'
+];
+
+let payloadData = null;
+let foundPath = null;
+
+for (const p of possiblePayloadPaths) {
   try {
-    const files = fs.readdirSync('/tmp');
-    console.log(files.join(', '));
+    const content = fs.readFileSync(p, 'utf8');
+    payloadData = JSON.parse(content);
+    foundPath = p;
+    console.log('Found payload at:', p);
+    break;
   } catch (e) {
-    console.log('Cannot read /tmp');
+    console.log('No payload at:', p);
   }
+}
 
-  // Write dummy result so pipeline continues
-  const resultPath = process.env.SUPERPLANE_RESULT_FILE || '/tmp/result.json';
-  fs.writeFileSync(resultPath, JSON.stringify({
-    success: false,
-    error: 'SUPERPLANE_PAYLOAD_FILE not set',
-    spec: 'Debug mode - payload file not found',
-    confidence: {
-      score: 0, risk: 'HIGH',
-      summary: 'Environment variable missing',
-      assumption: 'None',
-      uncertain: 'Everything'
-    }
-  }));
+if (!payloadData) {
+  console.log('No payload found anywhere');
+  console.log('Writing debug result...');
+  
+  fs.writeFileSync(
+    process.env.SUPERPLANE_RESULT_FILE,
+    JSON.stringify({
+      success: false,
+      error: 'Cannot find payload file',
+      spec: 'Payload not found — check logs',
+      confidence: {
+        score: 0, risk: 'HIGH',
+        summary: 'Cannot find payload',
+        assumption: 'None',
+        uncertain: 'Everything'
+      }
+    })
+  );
   process.exit(0);
 }
 
-const payload = JSON.parse(
-  fs.readFileSync(payloadPath, 'utf8')
-);
-
-console.log('Payload keys:', Object.keys(payload).join(', '));
+console.log('Payload keys:', Object.keys(payloadData).join(', '));
 
 const intake = (
-  payload['Stage 1 - Intake'] &&
-  payload['Stage 1 - Intake'].data &&
-  payload['Stage 1 - Intake'].data.body &&
-  payload['Stage 1 - Intake'].data.body.data
+  payloadData['Stage 1 - Intake'] &&
+  payloadData['Stage 1 - Intake'].data &&
+  payloadData['Stage 1 - Intake'].data.body &&
+  payloadData['Stage 1 - Intake'].data.body.data
 ) || {};
 
 const title = intake.title || 'No title found';
@@ -113,7 +117,7 @@ Be concrete, specific, and practical.
 Do not truncate — write the complete spec.`;
 
 (async () => {
-  console.log('Calling Claude...');
+  console.log('Calling Claude Sonnet...');
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -133,7 +137,8 @@ Do not truncate — write the complete spec.`;
     'SUMMARY', 'REQUIREMENTS', 'IMPLEMENTATION',
     'FILES', 'ACCEPTANCE'
   ].every(s => spec.toUpperCase().includes(s));
-  const hasBulletPoints = spec.includes('-') || spec.includes('•');
+  const hasBulletPoints = spec.includes('-')
+    || spec.includes('•');
   const hasNumberedSteps = /\d+\./.test(spec);
 
   let score = 40;
@@ -162,28 +167,30 @@ Do not truncate — write the complete spec.`;
     }
   };
 
-  const resultPath = process.env.SUPERPLANE_RESULT_FILE
-    || '/tmp/result.json';
+  fs.writeFileSync(
+    process.env.SUPERPLANE_RESULT_FILE,
+    JSON.stringify(result)
+  );
 
-  fs.writeFileSync(resultPath, JSON.stringify(result));
-  console.log('Result written to:', resultPath);
+  console.log('Result written to:', process.env.SUPERPLANE_RESULT_FILE);
   console.log('Score:', score, '| Risk:', risk);
   console.log('Stage 2 complete');
 
 })().catch(err => {
   console.error('Spec Agent failed:', err);
-  const resultPath = process.env.SUPERPLANE_RESULT_FILE
-    || '/tmp/result.json';
-  fs.writeFileSync(resultPath, JSON.stringify({
-    success: false,
-    error: String(err),
-    spec: '',
-    confidence: {
-      score: 0, risk: 'HIGH',
-      summary: 'Stage failed',
-      assumption: 'None',
-      uncertain: 'Everything'
-    }
-  }));
+  fs.writeFileSync(
+    process.env.SUPERPLANE_RESULT_FILE,
+    JSON.stringify({
+      success: false,
+      error: String(err),
+      spec: '',
+      confidence: {
+        score: 0, risk: 'HIGH',
+        summary: 'Stage failed',
+        assumption: 'None',
+        uncertain: 'Everything'
+      }
+    })
+  );
   process.exit(1);
 });
