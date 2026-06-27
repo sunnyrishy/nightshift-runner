@@ -352,27 +352,71 @@ app.post('/deploy', async (req, res) => {
       });
     const sha = refData.object.sha;
 
-    // Create new branch
+    // Create new branch or use existing
     try {
-      await octokit.rest.git.createRef({
-        owner,
-        repo,
-        ref: `refs/heads/${branch}`,
-        sha
-      });
+        await octokit.rest.git.createRef({
+            owner,
+            repo,
+            ref: `refs/heads/${branch}`,
+            sha
+        });
+        console.log(`Created new branch: ${branch}`);
     } catch (e) {
-      // Branch might already exist — continue
+        if (e.status === 422) {
+            console.log(`Branch ${branch} already exists, continuing...`);
+        } else {
+            throw e;
+        }
     }
 
-    // Push implementation file
-    await octokit.rest.repos.createOrUpdateFileContents({
-      owner,
-      repo,
-      path: `nightshift/${filename}`,
-      message: `feat: NightShift implementation for issue #${issue_number}`,
-      content: Buffer.from(code).toString('base64'),
-      branch
-    });
+        // Push implementation file - handle existing files
+    const pushFile = async (path, content, message) => {
+    try {
+        // Check if file already exists to get its SHA
+        let fileSha;
+        try {
+        const { data: existingFile } =
+            await octokit.rest.repos.getContent({
+            owner,
+            repo,
+            path,
+            ref: branch
+            });
+        fileSha = existingFile.sha;
+        } catch (e) {
+        // File doesn't exist yet - that's fine
+        }
+
+        await octokit.rest.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        path,
+        message,
+        content: Buffer.from(content).toString('base64'),
+        branch,
+        ...(fileSha && { sha: fileSha })
+        });
+    } catch (e) {
+        console.error(`Failed to push ${path}:`, e.message);
+        throw e;
+    }
+    };
+
+    // Push both files
+    await pushFile(
+    `nightshift/${filename}`,
+    code,
+    `feat: NightShift implementation for issue #${issue_number}`
+    );
+
+    await pushFile(
+    `nightshift/${filename.replace('.js', '.test.js')
+        .replace('.ts', '.test.ts')
+        .replace('.jsx', '.test.jsx')
+        .replace('.tsx', '.test.tsx')}`,
+    tests,
+    `test: NightShift tests for issue #${issue_number}`
+    );
 
     // Push test file
     await octokit.rest.repos.createOrUpdateFileContents({
