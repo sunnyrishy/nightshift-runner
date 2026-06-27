@@ -141,7 +141,7 @@ app.post('/spec', async (req, res) => {
     const { title, body, owner, repo } = req.body;
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1000,
+      max_tokens: 1500,
       messages: [{
         role: 'user',
         content: `You are a senior software engineer writing a 
@@ -174,7 +174,7 @@ Be specific and practical.`
     );
 
     // Truncate spec to stay under SuperPlane's 64KB limit
-const truncatedSpec = spec.substring(0, 2000);
+const truncatedSpec = spec.substring(0, 8000);
 
     res.json({
         success: true, stage: 'spec',
@@ -196,7 +196,7 @@ app.post('/code', async (req, res) => {
     const { spec, title } = req.body;
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2000,
+      max_tokens: 2500,
       messages: [{
         role: 'user',
         content: `You are a senior software engineer 
@@ -242,7 +242,7 @@ list npm packages needed`
         success: true, stage: 'code',
         data: {
             filename: codeOutput.filename,
-            code: codeOutput.code.substring(0, 3000),
+            code: codeOutput.code.substring(0, 10000),
             dependencies: codeOutput.dependencies,
             confidence
         }
@@ -260,7 +260,7 @@ app.post('/test', async (req, res) => {
     const { code, filename, spec } = req.body;
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1200,
+      max_tokens: 1500,
       messages: [{
         role: 'user',
         content: `Write Jest unit tests for this code.
@@ -297,7 +297,7 @@ TEST_COUNT: number`
     res.json({
         success: true, stage: 'test',
         data: {
-            tests: testOutput.tests.substring(0, 2000),
+            tests: testOutput.tests.substring(0, 8000),
             test_count: testOutput.test_count,
             tests_passed: true,
             message: 'Tests generated successfully',
