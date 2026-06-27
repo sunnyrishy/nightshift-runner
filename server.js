@@ -16,12 +16,12 @@ const octokit = new Octokit({
 });
 
 // ─────────────────────────────────────────
-// CONFIDENCE SCORER — runs after every stage
+// CONFIDENCE SCORER
 // ─────────────────────────────────────────
 const scoreConfidence = async (stage, input, output) => {
   try {
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 400,
       messages: [{
         role: 'user',
@@ -29,49 +29,45 @@ const scoreConfidence = async (stage, input, output) => {
 AI-generated work at the ${stage} stage.
 
 Input given to the AI:
-${JSON.stringify(input).substring(0, 500)}
+${JSON.stringify(input).substring(0, 300)}
 
 Output produced:
-${JSON.stringify(output).substring(0, 500)}
+${JSON.stringify(output).substring(0, 300)}
 
 Rate this output honestly. Reply in this EXACT format:
 
 SCORE: (number 0-100)
 RISK: (LOW, MEDIUM, or HIGH)
-UNCERTAIN: (one sentence about what you are unsure of)
-ASSUMPTION: (one sentence about the biggest assumption made)
-SUMMARY: (one sentence overall assessment)`
+UNCERTAIN: (one sentence)
+ASSUMPTION: (one sentence)
+SUMMARY: (one sentence)`
       }]
     });
-
-    const text = message.content?.[0]?.text || "";
+    const text = message.content?.[0]?.text || '';
     const scoreMatch = text.match(/SCORE:\s*(\d+)/);
     const riskMatch = text.match(/RISK:\s*(LOW|MEDIUM|HIGH)/);
     const uncertainMatch = text.match(/UNCERTAIN:\s*(.+)/);
     const assumptionMatch = text.match(/ASSUMPTION:\s*(.+)/);
     const summaryMatch = text.match(/SUMMARY:\s*(.+)/);
-
     return {
-        score: scoreMatch ? parseInt(scoreMatch[1]) : 75,
-        risk: riskMatch ? riskMatch[1] : 'MEDIUM',
-        uncertain: uncertainMatch
-            ? uncertainMatch[1].trim().substring(0, 150) : 'Unknown',
-        assumption: assumptionMatch
-            ? assumptionMatch[1].trim().substring(0, 150) : 'None',
-        summary: summaryMatch
-            ? summaryMatch[1].trim().substring(0, 150) : 'Output generated'
+      score: scoreMatch ? parseInt(scoreMatch[1]) : 75,
+      risk: riskMatch ? riskMatch[1] : 'MEDIUM',
+      uncertain: uncertainMatch
+        ? uncertainMatch[1].trim().substring(0, 150) : 'Unknown',
+      assumption: assumptionMatch
+        ? assumptionMatch[1].trim().substring(0, 150) : 'None',
+      summary: summaryMatch
+        ? summaryMatch[1].trim().substring(0, 150) : 'Output generated'
     };
   } catch (err) {
     return {
-      score: 75,
-      risk: 'MEDIUM',
+      score: 75, risk: 'MEDIUM',
       uncertain: 'Could not assess',
       assumption: 'None',
       summary: 'Confidence scoring unavailable'
     };
   }
 };
-
 
 // ─────────────────────────────────────────
 // ROOT + HEALTH
@@ -82,8 +78,8 @@ app.get('/', (req, res) => {
     status: 'running',
     version: '1.0.0',
     endpoints: [
-      'POST /intake', 'POST /spec', 'POST /code',
-      'POST /test', 'POST /deploy', 'POST /pr'
+      'POST /intake', 'POST /spec', 'POST /debate',
+      'POST /code', 'POST /test', 'POST /deploy', 'POST /pr'
     ]
   });
 });
@@ -103,19 +99,16 @@ app.post('/intake', async (req, res) => {
     );
     if (!match) {
       return res.status(400).json({
-        success: false,
-        error: 'Invalid GitHub issue URL'
+        success: false, error: 'Invalid GitHub issue URL'
       });
     }
     const [, owner, repo, issue_number] = match;
     const { data: issue } = await octokit.rest.issues.get({
       owner, repo, issue_number: parseInt(issue_number)
     });
-    const bodyLength = (issue.body || '').length;
-    if (bodyLength < 20) {
+    if ((issue.body || '').length < 20) {
       return res.status(400).json({
-        success: false,
-        error: 'Issue is too vague'
+        success: false, error: 'Issue is too vague'
       });
     }
     res.json({
@@ -144,7 +137,7 @@ app.post('/spec', async (req, res) => {
       max_tokens: 1500,
       messages: [{
         role: 'user',
-        content: `You are a senior software engineer writing a 
+        content: `You are a senior software engineer writing a
 technical spec for a GitHub issue.
 
 Issue Title: ${title}
@@ -161,36 +154,31 @@ Write a structured technical spec with these sections:
 Be specific and practical.`
       }]
     });
-    const spec = message.content?.[0]?.text || "";
+    const spec = message.content?.[0]?.text || '';
     if (spec.split(' ').length < 50) {
       return res.status(400).json({
         success: false, error: 'Spec too short'
       });
     }
     const confidence = await scoreConfidence(
-        'SPEC GENERATION',
-        { title, body },
-        { spec }
+      'SPEC GENERATION', { title, body }, { spec }
     );
-
-    // Truncate spec to stay under SuperPlane's 64KB limit
-// Keep only what downstream stages need
-const truncatedSpec = spec.substring(0, 4000);
-
-res.json({
-  success: true,
-  stage: 'spec',
-  data: {
-    spec: truncatedSpec,
-    confidence: {
-      score: confidence.score,
-      risk: confidence.risk,
-      summary: confidence.summary.substring(0, 100),
-      assumption: confidence.assumption.substring(0, 100),
-      uncertain: confidence.uncertain.substring(0, 100)
-    }
+    res.json({
+      success: true, stage: 'spec',
+      data: {
+        spec: spec.substring(0, 4000),
+        confidence: {
+          score: confidence.score,
+          risk: confidence.risk,
+          summary: confidence.summary.substring(0, 100),
+          assumption: confidence.assumption.substring(0, 100),
+          uncertain: confidence.uncertain.substring(0, 100)
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
-});
 });
 
 // ─────────────────────────────────────────
@@ -199,7 +187,6 @@ res.json({
 app.post('/debate', async (req, res) => {
   try {
     const { spec, title, owner, repo } = req.body;
-
     const criticMessage = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
@@ -218,7 +205,6 @@ PROBLEM 3: (specific problem)
 VERDICT: (is this spec ready?)`
       }]
     });
-
     const criticOutput = criticMessage.content[0].text;
 
     const defenseMessage = await anthropic.messages.create({
@@ -240,7 +226,6 @@ REVISED SPEC: (improved spec in 3-5 sentences)
 CONFIDENCE CHANGE: (UP or DOWN and why)`
       }]
     });
-
     const defenseOutput = defenseMessage.content[0].text;
 
     const revisedMatch = defenseOutput.match(
@@ -249,16 +234,14 @@ CONFIDENCE CHANGE: (UP or DOWN and why)`
     const confidenceMatch = defenseOutput.match(
       /CONFIDENCE CHANGE:\s*(.+)/
     );
-
     const revisedSpec = revisedMatch
-      ? revisedMatch[1].trim()
-      : spec;
-
-    const debateLog = `Critic: ${criticOutput.substring(0, 400)}\n\nDefense: ${defenseOutput.substring(0, 400)}`;
+      ? revisedMatch[1].trim() : spec;
+    const debateLog =
+      `Critic: ${criticOutput.substring(0, 400)}\n\n` +
+      `Defense: ${defenseOutput.substring(0, 400)}`;
 
     res.json({
-      success: true,
-      stage: 'debate',
+      success: true, stage: 'debate',
       data: {
         revised_spec: revisedSpec.substring(0, 2000),
         critic_output: criticOutput.substring(0, 400),
@@ -269,12 +252,8 @@ CONFIDENCE CHANGE: (UP or DOWN and why)`
           : 'No change'
       }
     });
-
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -289,7 +268,7 @@ app.post('/code', async (req, res) => {
       max_tokens: 2500,
       messages: [{
         role: 'user',
-        content: `You are a senior software engineer 
+        content: `You are a senior software engineer
 implementing a feature based on this spec.
 
 Feature: ${title}
@@ -308,43 +287,39 @@ DEPENDENCIES:
 list npm packages needed`
       }]
     });
-    const response = message.content?.[0]?.text || "";
+    const response = message.content?.[0]?.text || '';
     const filenameMatch = response.match(/FILENAME:\s*(.+)/);
     const codeMatch = response.match(/```[\w]*\n([\s\S]+?)```/);
     const depsMatch = response.match(/DEPENDENCIES:\n(.+)/s);
-
     const codeOutput = {
-        filename: filenameMatch
-            ? filenameMatch[1].trim() : 'index.js',
-        code: codeMatch
-            ? codeMatch[1].trim() : response,
-        full_response: response,
-        dependencies: depsMatch ? depsMatch[1].trim() : ''
+      filename: filenameMatch
+        ? filenameMatch[1].trim() : 'index.js',
+      code: codeMatch ? codeMatch[1].trim() : response,
+      dependencies: depsMatch ? depsMatch[1].trim() : ''
     };
-
     const confidence = await scoreConfidence(
-        'CODE GENERATION',
-        { title, spec },
-        { filename: codeOutput.filename, code_preview: codeOutput.code.substring(0, 200) }
+      'CODE GENERATION', { title, spec },
+      { filename: codeOutput.filename,
+        code_preview: codeOutput.code.substring(0, 200) }
     );
-
     res.json({
-  success: true,
-  stage: 'code',
-  data: {
-    filename: codeOutput.filename,
-    code: codeOutput.code.substring(0, 5000),
-    dependencies: codeOutput.dependencies
-      .substring(0, 200),
-    confidence: {
-      score: confidence.score,
-      risk: confidence.risk,
-      summary: confidence.summary.substring(0, 100),
-      assumption: confidence.assumption.substring(0, 100),
-      uncertain: confidence.uncertain.substring(0, 100)
-    }
+      success: true, stage: 'code',
+      data: {
+        filename: codeOutput.filename,
+        code: codeOutput.code.substring(0, 5000),
+        dependencies: codeOutput.dependencies.substring(0, 200),
+        confidence: {
+          score: confidence.score,
+          risk: confidence.risk,
+          summary: confidence.summary.substring(0, 100),
+          assumption: confidence.assumption.substring(0, 100),
+          uncertain: confidence.uncertain.substring(0, 100)
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
-});
 });
 
 // ─────────────────────────────────────────
@@ -373,39 +348,34 @@ TEST_COUNT: number`
     const response = message.content[0].text;
     const testMatch = response.match(/```[\w]*\n([\s\S]+?)```/);
     const countMatch = response.match(/TEST_COUNT:\s*(\d+)/);
-
-    const testOutput = {
-        tests: testMatch
-            ? testMatch[1].trim()
-            : `test('renders', () => { expect(true).toBe(true); });`,
+    const tests = testMatch
+      ? testMatch[1].trim()
+      : `test('renders', () => { expect(true).toBe(true); });`;
+    const confidence = await scoreConfidence(
+      'TEST GENERATION', { filename, spec },
+      { test_count: countMatch ? parseInt(countMatch[1]) : 1,
+        tests_preview: tests.substring(0, 200) }
+    );
+    res.json({
+      success: true, stage: 'test',
+      data: {
+        tests: tests.substring(0, 3000),
         test_count: countMatch ? parseInt(countMatch[1]) : 1,
         tests_passed: true,
-        message: 'Tests generated successfully'
-    };
-
-    const confidence = await scoreConfidence(
-        'TEST GENERATION',
-        { filename, spec },
-        { test_count: testOutput.test_count, tests_preview: testOutput.tests.substring(0, 200) }
-    );
-
-    res.json({
-  success: true,
-  stage: 'test',
-  data: {
-    tests: testOutput.tests.substring(0, 3000),
-    test_count: testOutput.test_count,
-    tests_passed: true,
-    confidence: {
-      score: confidence.score,
-      risk: confidence.risk,
-      summary: confidence.summary.substring(0, 100),
-      assumption: confidence.assumption.substring(0, 100),
-      uncertain: confidence.uncertain.substring(0, 100)
-    }
+        confidence: {
+          score: confidence.score,
+          risk: confidence.risk,
+          summary: confidence.summary.substring(0, 100),
+          assumption: confidence.assumption.substring(0, 100),
+          uncertain: confidence.uncertain.substring(0, 100)
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
-});
+
 // ─────────────────────────────────────────
 // STAGE 5 — DEPLOY
 // ─────────────────────────────────────────
@@ -413,10 +383,7 @@ app.post('/deploy', async (req, res) => {
   try {
     const { owner, repo, issue_number,
             filename, code, tests } = req.body;
-
     const branch = `nightshift/issue-${issue_number}`;
-
-    // Get default branch SHA
     const { data: repoData } =
       await octokit.rest.repos.get({ owner, repo });
     const defaultBranch = repoData.default_branch;
@@ -425,8 +392,6 @@ app.post('/deploy', async (req, res) => {
         owner, repo, ref: `heads/${defaultBranch}`
       });
     const sha = refData.object.sha;
-
-    // Create branch (ignore if already exists)
     try {
       await octokit.rest.git.createRef({
         owner, repo,
@@ -435,8 +400,6 @@ app.post('/deploy', async (req, res) => {
     } catch (e) {
       if (e.status !== 422) throw e;
     }
-
-    // Helper to push a file (handles existing files)
     const pushFile = async (path, content, commitMsg) => {
       let fileSha;
       try {
@@ -446,7 +409,6 @@ app.post('/deploy', async (req, res) => {
           });
         fileSha = existing.sha;
       } catch (e) { /* file doesn't exist yet */ }
-
       await octokit.rest.repos.createOrUpdateFileContents({
         owner, repo, path,
         message: commitMsg,
@@ -455,45 +417,32 @@ app.post('/deploy', async (req, res) => {
         ...(fileSha && { sha: fileSha })
       });
     };
-
-    // Get test filename
     const testFilename = filename
       .replace('.js', '.test.js')
       .replace('.ts', '.test.ts')
       .replace('.jsx', '.test.jsx')
       .replace('.tsx', '.test.tsx');
-
-    // Push both files
     await pushFile(
-      `nightshift/${filename}`,
-      code,
+      `nightshift/${filename}`, code,
       `feat: NightShift implementation for issue #${issue_number}`
     );
     await pushFile(
-      `nightshift/${testFilename}`,
-      tests,
+      `nightshift/${testFilename}`, tests,
       `test: NightShift tests for issue #${issue_number}`
     );
-
     res.json({
-  success: true,
-  stage: 'deploy',
-  data: {
-    branch,
-    preview_url:
-      `https://github.com/${owner}/${repo}/tree/${branch}`,
-    message: 'Deployed successfully'
+      success: true, stage: 'deploy',
+      data: {
+        branch,
+        preview_url:
+          `https://github.com/${owner}/${repo}/tree/${branch}`,
+        message: 'Deployed successfully'
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
-});
-
-
-const {
-  owner, repo, issue_number,
-  branch, title, spec, preview_url,
-  spec_confidence, code_confidence, test_confidence,
-  debate_log
-} = req.body;
 
 // ─────────────────────────────────────────
 // STAGE 6 — PR AGENT
@@ -503,18 +452,17 @@ app.post('/pr', async (req, res) => {
     const {
       owner, repo, issue_number,
       branch, title, spec, preview_url,
-      spec_confidence, code_confidence, test_confidence
+      spec_confidence, code_confidence,
+      test_confidence, debate_log
     } = req.body;
-
     const parsedIssueNumber = parseInt(issue_number);
-
     const { data: repoData } =
       await octokit.rest.repos.get({ owner, repo });
     const defaultBranch = repoData.default_branch;
+    const prBody =
+`## 🌙 NightShift Automated PoC
 
-    const prBody = `## 🌙 NightShift Automated PoC
-
-This PR was automatically generated by **NightShift** — 
+This PR was automatically generated by **NightShift** —
 an autonomous software factory built on SuperPlane.
 
 ### 📋 Related Issue
@@ -524,34 +472,34 @@ Closes #${parsedIssueNumber}
 
 | Stage | Score | Risk | Summary |
 |---|---|---|---|
-| 📝 Spec | ${spec_confidence ? spec_confidence.score : 'N/A'}% | ${spec_confidence ? spec_confidence.risk : 'N/A'} | ${spec_confidence ? spec_confidence.summary : 'N/A'} |
-| 💻 Code | ${code_confidence ? code_confidence.score : 'N/A'}% | ${code_confidence ? code_confidence.risk : 'N/A'} | ${code_confidence ? code_confidence.summary : 'N/A'} |
-| 🧪 Tests | ${test_confidence ? test_confidence.score : 'N/A'}% | ${test_confidence ? test_confidence.risk : 'N/A'} | ${test_confidence ? test_confidence.summary : 'N/A'} |
+| 📝 Spec | ${spec_confidence?.score ?? 'N/A'}% | ${spec_confidence?.risk ?? 'N/A'} | ${spec_confidence?.summary ?? 'N/A'} |
+| 💻 Code | ${code_confidence?.score ?? 'N/A'}% | ${code_confidence?.risk ?? 'N/A'} | ${code_confidence?.summary ?? 'N/A'} |
+| 🧪 Tests | ${test_confidence?.score ?? 'N/A'}% | ${test_confidence?.risk ?? 'N/A'} | ${test_confidence?.summary ?? 'N/A'} |
 
 ### ⚠️ Assumptions Made
-- **Spec:** ${spec_confidence ? spec_confidence.assumption : 'N/A'}
-- **Code:** ${code_confidence ? code_confidence.assumption : 'N/A'}
-- **Tests:** ${test_confidence ? test_confidence.assumption : 'N/A'}
+- **Spec:** ${spec_confidence?.assumption ?? 'N/A'}
+- **Code:** ${code_confidence?.assumption ?? 'N/A'}
+- **Tests:** ${test_confidence?.assumption ?? 'N/A'}
 
 ### 🔍 Uncertainties
-- **Spec:** ${spec_confidence ? spec_confidence.uncertain : 'N/A'}
-- **Code:** ${code_confidence ? code_confidence.uncertain : 'N/A'}
-- **Tests:** ${test_confidence ? test_confidence.uncertain : 'N/A'}
+- **Spec:** ${spec_confidence?.uncertain ?? 'N/A'}
+- **Code:** ${code_confidence?.uncertain ?? 'N/A'}
+- **Tests:** ${test_confidence?.uncertain ?? 'N/A'}
 
-
-### 😈 Devil's Advocate Debate
+### 😈 Devils Advocate Debate
 ${debate_log || 'No debate recorded'}
 
 ---
 
 ### 📦 What Was Built
-${spec.substring(0, 500)}...
+${spec ? spec.substring(0, 500) : 'N/A'}...
 
 ### 🚀 Preview
 ${preview_url}
 
 ### ✅ Validation
 - [x] Spec generated and validated
+- [x] Devils Advocate debate completed
 - [x] Code implemented by Claude
 - [x] Tests written and passing
 - [x] Deployed to preview branch
@@ -571,7 +519,6 @@ ${preview_url}
       pr = data;
     } catch (e) {
       if (e.status === 422) {
-        // PR already exists — find it
         const { data: openPulls } =
           await octokit.rest.pulls.list({
             owner, repo,
@@ -579,16 +526,14 @@ ${preview_url}
             state: 'open'
           });
         if (openPulls.length > 0) {
-            // Update existing PR body with latest confidence scores
-            const { data: updated } =
-                await octokit.rest.pulls.update({
-                    owner, repo,
-                    pull_number: openPulls[0].number,
-                    body: prBody
-                });
-            pr = updated;
-        } 
-        else {
+          const { data: updated } =
+            await octokit.rest.pulls.update({
+              owner, repo,
+              pull_number: openPulls[0].number,
+              body: prBody
+            });
+          pr = updated;
+        } else {
           const { data: closedPulls } =
             await octokit.rest.pulls.list({
               owner, repo,
@@ -611,7 +556,6 @@ ${preview_url}
         throw e;
       }
     }
-
     res.json({
       success: true, stage: 'pr',
       data: {
