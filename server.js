@@ -194,6 +194,125 @@ res.json({
 });
 
 // ─────────────────────────────────────────
+// STAGE 2.5 — DEVIL'S ADVOCATE
+// ─────────────────────────────────────────
+app.post('/debate', async (req, res) => {
+  try {
+    const { spec, title, owner, repo } = req.body;
+
+    // Round 1 — Critic attacks the spec
+    const criticMessage = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      messages: [{
+        role: 'user',
+        content: `You are a senior engineer who is 
+skeptical and critical. Your job is to find problems 
+with this technical spec before any code is written.
+
+Feature: ${title}
+Repository: ${owner}/${repo}
+
+Spec to critique:
+${spec.substring(0, 2000)}
+
+Find the top 3 problems with this spec. Be specific 
+and harsh. Look for:
+- Missing edge cases
+- Wrong technical approach
+- Unclear requirements
+- Missing dependencies
+- Performance concerns
+- Security issues
+
+Reply in this EXACT format:
+PROBLEM 1: (specific problem)
+PROBLEM 2: (specific problem)  
+PROBLEM 3: (specific problem)
+VERDICT: (one sentence — is this spec ready to implement?)`
+      }]
+    });
+
+    const criticOutput = criticMessage.content[0].text;
+
+    // Round 2 — Spec Agent defends and revises
+    const defenseMessage = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: `You are the engineer who wrote this spec.
+A critic just attacked it. Defend your choices where 
+correct, but honestly revise where the critic has a 
+valid point.
+
+Original spec:
+${spec.substring(0, 1500)}
+
+Critic's problems:
+${criticOutput}
+
+Reply in this EXACT format:
+RESPONSE 1: (defend or concede problem 1)
+RESPONSE 2: (defend or concede problem 2)
+RESPONSE 3: (defend or concede problem 3)
+REVISED SPEC: (write the improved spec in 3-5 sentences)
+CONFIDENCE CHANGE: (did confidence go UP or DOWN and why?)`
+      }]
+    });
+
+    const defenseOutput = defenseMessage.content[0].text;
+
+    // Extract revised spec
+    const revisedMatch = defenseOutput.match(
+      /REVISED SPEC:\s*([\s\S]+?)(?=CONFIDENCE CHANGE:|$)/
+    );
+    const confidenceMatch = defenseOutput.match(
+      /CONFIDENCE CHANGE:\s*(.+)/
+    );
+
+    const revisedSpec = revisedMatch
+      ? revisedMatch[1].trim()
+      : spec;
+
+    // Format debate log for PR
+    const debateLog = `### 😈 Devil's Advocate Debate
+
+**Critic attacked the spec:**
+${criticOutput.substring(0, 500)}
+
+**Spec author responded:**
+${defenseOutput.substring(0, 500)}
+
+**Confidence change:** ${confidenceMatch
+      ? confidenceMatch[1].trim()
+      : 'No change'}`;
+
+    res.json({
+      success: true,
+      stage: 'debate',
+      data: {
+        original_spec: spec.substring(0, 1000),
+        critic_output: criticOutput.substring(0, 500),
+        defense_output: defenseOutput.substring(0, 500),
+        revised_spec: revisedSpec.substring(0, 2000),
+        debate_log: debateLog.substring(0, 1500),
+        confidence_change: confidenceMatch
+          ? confidenceMatch[1].trim().substring(0, 100)
+          : 'No change'
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+
+// ─────────────────────────────────────────
 // STAGE 3 — CODE AGENT
 // ─────────────────────────────────────────
 app.post('/code', async (req, res) => {
@@ -402,6 +521,14 @@ app.post('/deploy', async (req, res) => {
 });
 });
 
+
+const {
+  owner, repo, issue_number,
+  branch, title, spec, preview_url,
+  spec_confidence, code_confidence, test_confidence,
+  debate_log
+} = req.body;
+
 // ─────────────────────────────────────────
 // STAGE 6 — PR AGENT
 // ─────────────────────────────────────────
@@ -444,6 +571,12 @@ Closes #${parsedIssueNumber}
 - **Spec:** ${spec_confidence ? spec_confidence.uncertain : 'N/A'}
 - **Code:** ${code_confidence ? code_confidence.uncertain : 'N/A'}
 - **Tests:** ${test_confidence ? test_confidence.uncertain : 'N/A'}
+
+
+### 😈 Devil's Advocate Debate
+${debate_log || 'No debate recorded'}
+
+---
 
 ### 📦 What Was Built
 ${spec.substring(0, 500)}...
