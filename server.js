@@ -22,7 +22,7 @@ const scoreConfidence = async (stage, input, output) => {
   try {
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 400,
+      max_tokens: 300,
       messages: [{
         role: 'user',
         content: `You are a senior engineer reviewing 
@@ -133,25 +133,21 @@ app.post('/spec', async (req, res) => {
   try {
     const { title, body, owner, repo } = req.body;
     const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
       messages: [{
         role: 'user',
-        content: `You are a senior software engineer writing a
-technical spec for a GitHub issue.
+        content: `Write a concise technical spec for this GitHub issue.
 
-Issue Title: ${title}
-Issue Body: ${body}
-Repository: ${owner}/${repo}
+Title: ${title}
+Description: ${body.substring(0, 500)}
 
-Write a structured technical spec with these sections:
-1. SUMMARY: One sentence describing what to build
-2. REQUIREMENTS: Bullet list of exact requirements
-3. IMPLEMENTATION PLAN: Step by step what to code
-4. FILES TO CREATE/MODIFY: List the files needed
-5. ACCEPTANCE CRITERIA: How to verify it works
-
-Be specific and practical.`
+Reply with exactly these sections, keep each brief:
+SUMMARY: (one sentence)
+REQUIREMENTS: (3-5 bullet points max)
+IMPLEMENTATION: (3 steps max)
+FILES: (2-3 files max)
+DONE WHEN: (one acceptance criterion)`
       }]
     });
     const spec = message.content?.[0]?.text || '';
@@ -189,20 +185,28 @@ app.post('/debate', async (req, res) => {
     const { spec, title, owner, repo } = req.body;
     const criticMessage = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
+      max_tokens: 300,
       messages: [{
         role: 'user',
-        content: `You are a skeptical senior engineer.
-Find the top 3 problems with this spec.
+        content: `Find 2 problems with this spec in 2 sentences each.
 
 Feature: ${title}
-Spec: ${spec.substring(0, 1500)}
+Spec: ${spec.substring(0, 800)}
 
-Reply in this EXACT format:
-PROBLEM 1: (specific problem)
-PROBLEM 2: (specific problem)
-PROBLEM 3: (specific problem)
-VERDICT: (is this spec ready?)`
+PROBLEM 1: 
+PROBLEM 2: 
+VERDICT: (ready/not ready)`
+
+// Defense  
+max_tokens: 300,
+content: `Address these 2 problems and give a revised spec.
+Spec: ${spec.substring(0, 600)}
+Problems: ${criticOutput}
+
+RESPONSE 1:
+RESPONSE 2:
+REVISED SPEC: (2-3 sentences)
+CONFIDENCE CHANGE: (UP/DOWN)`
       }]
     });
     const criticOutput = criticMessage.content[0].text;
@@ -264,27 +268,24 @@ app.post('/code', async (req, res) => {
   try {
     const { spec, title } = req.body;
     const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2500,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
       messages: [{
         role: 'user',
-        content: `You are a senior software engineer
-implementing a feature based on this spec.
+        content: `Implement this feature in clean JavaScript.
 
 Feature: ${title}
-Spec: ${spec}
+Spec: ${spec.substring(0, 600)}
 
-Write clean working JavaScript code.
+Return ONLY this format:
 
-Return in this EXACT format:
-
-FILENAME: index.js
+FILENAME: ComponentName.js
 \`\`\`javascript
-// your code here
+// complete working code here
+// no truncation, no TODOs
 \`\`\`
 
-DEPENDENCIES:
-list npm packages needed`
+DEPENDENCIES: package1, package2`
       }]
     });
     const response = message.content?.[0]?.text || '';
@@ -330,19 +331,18 @@ app.post('/test', async (req, res) => {
     const { code, filename, spec } = req.body;
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
+      max_tokens: 600,
       messages: [{
         role: 'user',
-        content: `Write Jest unit tests for this code.
+        content: `Write 3 simple Jest tests for this code.
 
-Spec: ${spec}
-Code (${filename}): ${code}
+Code (${filename}):
+${code.substring(0, 800)}
 
-Return in this EXACT format:
 \`\`\`javascript
-// Jest tests here
+// 3 tests only
 \`\`\`
-TEST_COUNT: number`
+TEST_COUNT: 3`
       }]
     });
     const response = message.content[0].text;
