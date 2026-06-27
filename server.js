@@ -21,7 +21,7 @@ const octokit = new Octokit({
 const scoreConfidence = async (stage, input, output) => {
   try {
     const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 400,
       messages: [{
         role: 'user',
@@ -140,7 +140,7 @@ app.post('/spec', async (req, res) => {
   try {
     const { title, body, owner, repo } = req.body;
     const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       messages: [{
         role: 'user',
@@ -200,7 +200,7 @@ app.post('/code', async (req, res) => {
   try {
     const { spec, title } = req.body;
     const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2500,
       messages: [{
         role: 'user',
