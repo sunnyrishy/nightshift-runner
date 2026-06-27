@@ -381,9 +381,17 @@ TEST_COUNT: number`
 // ─────────────────────────────────────────
 app.post('/deploy', async (req, res) => {
   try {
-    const { owner, repo, issue_number,
-            filename, code, tests } = req.body;
+    const {
+      owner, repo, issue_number,
+      filename, code, tests,
+      spec, debate_log,
+      spec_confidence, code_confidence, test_confidence
+    } = req.body;
+
     const branch = `nightshift/issue-${issue_number}`;
+    const previewPath = `previews/issue-${issue_number}.html`;
+
+    // Get default branch SHA
     const { data: repoData } =
       await octokit.rest.repos.get({ owner, repo });
     const defaultBranch = repoData.default_branch;
@@ -392,6 +400,8 @@ app.post('/deploy', async (req, res) => {
         owner, repo, ref: `heads/${defaultBranch}`
       });
     const sha = refData.object.sha;
+
+    // Create feature branch (ignore if exists)
     try {
       await octokit.rest.git.createRef({
         owner, repo,
@@ -400,12 +410,16 @@ app.post('/deploy', async (req, res) => {
     } catch (e) {
       if (e.status !== 422) throw e;
     }
-    const pushFile = async (path, content, commitMsg) => {
+
+    // Helper to push file to any branch
+    const pushFile = async (
+      path, content, commitMsg, targetBranch
+    ) => {
       let fileSha;
       try {
         const { data: existing } =
           await octokit.rest.repos.getContent({
-            owner, repo, path, ref: branch
+            owner, repo, path, ref: targetBranch
           });
         fileSha = existing.sha;
       } catch (e) { /* file doesn't exist yet */ }
@@ -413,37 +427,308 @@ app.post('/deploy', async (req, res) => {
         owner, repo, path,
         message: commitMsg,
         content: Buffer.from(content).toString('base64'),
-        branch,
+        branch: targetBranch,
         ...(fileSha && { sha: fileSha })
       });
     };
+
+    // Get test filename
     const testFilename = filename
       .replace('.js', '.test.js')
       .replace('.ts', '.test.ts')
       .replace('.jsx', '.test.jsx')
       .replace('.tsx', '.test.tsx');
+
+    // Push code to feature branch
     await pushFile(
       `nightshift/${filename}`, code,
-      `feat: NightShift implementation for issue #${issue_number}`
+      `feat: NightShift implementation for issue #${issue_number}`,
+      branch
     );
     await pushFile(
       `nightshift/${testFilename}`, tests,
-      `test: NightShift tests for issue #${issue_number}`
+      `test: NightShift tests for issue #${issue_number}`,
+      branch
     );
+
+    // Generate preview HTML
+    const specScore = spec_confidence?.score ?? 'N/A';
+    const codeScore = code_confidence?.score ?? 'N/A';
+    const testScore = test_confidence?.score ?? 'N/A';
+    const overallRisk = code_confidence?.risk ?? 'MEDIUM';
+    const riskColor = overallRisk === 'LOW'
+      ? '#22c55e' : overallRisk === 'MEDIUM'
+      ? '#f59e0b' : '#ef4444';
+
+    const previewHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌙 NightShift — Issue #${issue_number}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont,
+      'Segoe UI', sans-serif;
+    background: #0a0f1e;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  .header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding: 40px;
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    border-radius: 16px;
+    border: 1px solid #334155;
+  }
+  .logo {
+    font-size: 48px;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    color: #94a3b8;
+    font-size: 16px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 12px;
+    background: ${riskColor}22;
+    color: ${riskColor};
+    border: 1px solid ${riskColor}44;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .score-card {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    border: 1px solid #334155;
+  }
+  .score-label {
+    font-size: 12px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .score-value {
+    font-size: 48px;
+    font-weight: 800;
+    color: #3b82f6;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .score-risk {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: ${riskColor}22;
+    color: ${riskColor};
+  }
+  .section {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 20px;
+    border: 1px solid #334155;
+  }
+  .section-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .debate-box {
+    background: #0f172a;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #94a3b8;
+    white-space: pre-wrap;
+    border-left: 3px solid #ef4444;
+  }
+  pre {
+    background: #0f172a;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    overflow-x: auto;
+    color: #94a3b8;
+    line-height: 1.6;
+    border-left: 3px solid #3b82f6;
+  }
+  .spec-text {
+    background: #0f172a;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #94a3b8;
+    white-space: pre-wrap;
+    border-left: 3px solid #22c55e;
+  }
+  .footer {
+    text-align: center;
+    color: #475569;
+    font-size: 13px;
+    margin-top: 40px;
+    padding: 20px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: #94a3b8;
+    margin: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="logo">🌙</div>
+    <h1>NightShift — Issue #${issue_number}</h1>
+    <p class="subtitle">
+      Autonomous Software Factory — Built on SuperPlane
+    </p>
+    <div class="badge">Overall Risk: ${overallRisk}</div>
+  </div>
+
+  <div class="grid">
+    <div class="score-card">
+      <div class="score-label">📝 Spec Confidence</div>
+      <div class="score-value">${specScore}%</div>
+      <div class="score-risk">
+        ${spec_confidence?.risk ?? 'N/A'}
+      </div>
+    </div>
+    <div class="score-card">
+      <div class="score-label">💻 Code Confidence</div>
+      <div class="score-value">${codeScore}%</div>
+      <div class="score-risk">
+        ${code_confidence?.risk ?? 'N/A'}
+      </div>
+    </div>
+    <div class="score-card">
+      <div class="score-label">🧪 Test Confidence</div>
+      <div class="score-value">${testScore}%</div>
+      <div class="score-risk">
+        ${test_confidence?.risk ?? 'N/A'}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">😈 Devils Advocate Debate</div>
+    <div class="debate-box">${
+      (debate_log || 'No debate recorded')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+    }</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">📋 Technical Spec</div>
+    <div class="spec-text">${
+      (spec || 'No spec available')
+        .substring(0, 2000)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+    }</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">💻 Generated Code — ${filename}</div>
+    <pre>${
+      (code || 'No code available')
+        .substring(0, 3000)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+    }</pre>
+  </div>
+
+  <div class="section">
+    <div class="section-title">🧪 Generated Tests</div>
+    <pre>${
+      (tests || 'No tests available')
+        .substring(0, 2000)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+    }</pre>
+  </div>
+
+  <div class="footer">
+    <div>
+      <span class="pill">🌙 NightShift</span>
+      <span class="pill">⚡ SuperPlane</span>
+      <span class="pill">🚀 Render</span>
+      <span class="pill">🤖 Claude AI</span>
+    </div>
+    <p style="margin-top: 12px">
+      Generated automatically — zero human involvement
+    </p>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    // Push preview HTML to main branch
+    await pushFile(
+      previewPath,
+      previewHtml,
+      `preview: NightShift preview for issue #${issue_number}`,
+      defaultBranch
+    );
+
+    const previewUrl =
+      `https://nightshift-previews.onrender.com/previews/issue-${issue_number}.html`;
+
     res.json({
       success: true, stage: 'deploy',
       data: {
         branch,
-        preview_url:
-          `https://github.com/${owner}/${repo}/tree/${branch}`,
+        preview_url: previewUrl,
         message: 'Deployed successfully'
       }
     });
+
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({
+      success: false, error: err.message
+    });
   }
 });
-
 // ─────────────────────────────────────────
 // STAGE 6 — PR AGENT
 // ─────────────────────────────────────────
