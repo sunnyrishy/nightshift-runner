@@ -474,8 +474,16 @@ ${preview_url}
             state: 'open'
           });
         if (openPulls.length > 0) {
-          pr = openPulls[0];
-        } else {
+            // Update existing PR body with latest confidence scores
+            const { data: updated } =
+                await octokit.rest.pulls.update({
+                    owner, repo,
+                    pull_number: openPulls[0].number,
+                    body: prBody
+                });
+            pr = updated;
+        } 
+        else {
           const { data: closedPulls } =
             await octokit.rest.pulls.list({
               owner, repo,
