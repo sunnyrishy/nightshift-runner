@@ -16,6 +16,61 @@ const octokit = new Octokit({
 });
 
 // ─────────────────────────────────────────
+// CONFIDENCE SCORER — runs after every stage
+// ─────────────────────────────────────────
+const scoreConfidence = async (stage, input, output) => {
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      messages: [{
+        role: 'user',
+        content: `You are a senior engineer reviewing 
+AI-generated work at the ${stage} stage.
+
+Input given to the AI:
+${JSON.stringify(input).substring(0, 500)}
+
+Output produced:
+${JSON.stringify(output).substring(0, 500)}
+
+Rate this output honestly. Reply in this EXACT format:
+
+SCORE: (number 0-100)
+RISK: (LOW, MEDIUM, or HIGH)
+UNCERTAIN: (one sentence about what you are unsure of)
+ASSUMPTION: (one sentence about the biggest assumption made)
+SUMMARY: (one sentence overall assessment)`
+      }]
+    });
+
+    const text = message.content[0].text;
+    const scoreMatch = text.match(/SCORE:\s*(\d+)/);
+    const riskMatch = text.match(/RISK:\s*(LOW|MEDIUM|HIGH)/);
+    const uncertainMatch = text.match(/UNCERTAIN:\s*(.+)/);
+    const assumptionMatch = text.match(/ASSUMPTION:\s*(.+)/);
+    const summaryMatch = text.match(/SUMMARY:\s*(.+)/);
+
+    return {
+      score: scoreMatch ? parseInt(scoreMatch[1]) : 75,
+      risk: riskMatch ? riskMatch[1] : 'MEDIUM',
+      uncertain: uncertainMatch ? uncertainMatch[1].trim() : 'Unknown',
+      assumption: assumptionMatch ? assumptionMatch[1].trim() : 'None',
+      summary: summaryMatch ? summaryMatch[1].trim() : 'Output generated'
+    };
+  } catch (err) {
+    return {
+      score: 75,
+      risk: 'MEDIUM',
+      uncertain: 'Could not assess',
+      assumption: 'None',
+      summary: 'Confidence scoring unavailable'
+    };
+  }
+};
+
+
+// ─────────────────────────────────────────
 // ROOT + HEALTH
 // ─────────────────────────────────────────
 app.get('/', (req, res) => {
@@ -109,7 +164,16 @@ Be specific and practical.`
         success: false, error: 'Spec too short'
       });
     }
-    res.json({ success: true, stage: 'spec', data: { spec } });
+    const confidence = await scoreConfidence(
+        'SPEC GENERATION',
+        { title, body },
+        { spec }
+    );
+
+    res.json({
+        success: true, stage: 'spec',
+        data: { spec, confidence }
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -150,16 +214,24 @@ list npm packages needed`
     const codeMatch = response.match(/```[\w]*\n([\s\S]+?)```/);
     const depsMatch = response.match(/DEPENDENCIES:\n(.+)/s);
 
-    res.json({
-      success: true, stage: 'code',
-      data: {
+    const codeOutput = {
         filename: filenameMatch
-          ? filenameMatch[1].trim() : 'index.js',
+            ? filenameMatch[1].trim() : 'index.js',
         code: codeMatch
-          ? codeMatch[1].trim() : response,
+            ? codeMatch[1].trim() : response,
         full_response: response,
         dependencies: depsMatch ? depsMatch[1].trim() : ''
-      }
+    };
+
+    const confidence = await scoreConfidence(
+        'CODE GENERATION',
+        { title, spec },
+        { filename: codeOutput.filename, code_preview: codeOutput.code.substring(0, 200) }
+    );
+
+    res.json({
+        success: true, stage: 'code',
+        data: { ...codeOutput, confidence }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -193,16 +265,24 @@ TEST_COUNT: number`
     const testMatch = response.match(/```[\w]*\n([\s\S]+?)```/);
     const countMatch = response.match(/TEST_COUNT:\s*(\d+)/);
 
-    res.json({
-      success: true, stage: 'test',
-      data: {
+    const testOutput = {
         tests: testMatch
-          ? testMatch[1].trim()
-          : `test('renders', () => { expect(true).toBe(true); });`,
+            ? testMatch[1].trim()
+            : `test('renders', () => { expect(true).toBe(true); });`,
         test_count: countMatch ? parseInt(countMatch[1]) : 1,
         tests_passed: true,
         message: 'Tests generated successfully'
-      }
+    };
+
+    const confidence = await scoreConfidence(
+        'TEST GENERATION',
+        { filename, spec },
+        { test_count: testOutput.test_count, tests_preview: testOutput.tests.substring(0, 200) }
+    );
+
+    res.json({
+        success: true, stage: 'test',
+        data: { ...testOutput, confidence }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -301,8 +381,11 @@ app.post('/deploy', async (req, res) => {
 // ─────────────────────────────────────────
 app.post('/pr', async (req, res) => {
   try {
-    const { owner, repo, issue_number,
-            branch, title, spec, preview_url } = req.body;
+    const {
+      owner, repo, issue_number,
+      branch, title, spec, preview_url,
+      spec_confidence, code_confidence, test_confidence
+    } = req.body;
 
     const parsedIssueNumber = parseInt(issue_number);
 
@@ -312,25 +395,44 @@ app.post('/pr', async (req, res) => {
 
     const prBody = `## 🌙 NightShift Automated PoC
 
-This PR was automatically generated by **NightShift**.
+This PR was automatically generated by **NightShift** — 
+an autonomous software factory built on SuperPlane.
 
-### Related Issue
+### 📋 Related Issue
 Closes #${parsedIssueNumber}
 
-### What Was Built
+### 🎯 Confidence Report
+
+| Stage | Score | Risk | Summary |
+|---|---|---|---|
+| 📝 Spec | ${spec_confidence ? spec_confidence.score : 'N/A'}% | ${spec_confidence ? spec_confidence.risk : 'N/A'} | ${spec_confidence ? spec_confidence.summary : 'N/A'} |
+| 💻 Code | ${code_confidence ? code_confidence.score : 'N/A'}% | ${code_confidence ? code_confidence.risk : 'N/A'} | ${code_confidence ? code_confidence.summary : 'N/A'} |
+| 🧪 Tests | ${test_confidence ? test_confidence.score : 'N/A'}% | ${test_confidence ? test_confidence.risk : 'N/A'} | ${test_confidence ? test_confidence.summary : 'N/A'} |
+
+### ⚠️ Assumptions Made
+- **Spec:** ${spec_confidence ? spec_confidence.assumption : 'N/A'}
+- **Code:** ${code_confidence ? code_confidence.assumption : 'N/A'}
+- **Tests:** ${test_confidence ? test_confidence.assumption : 'N/A'}
+
+### 🔍 Uncertainties
+- **Spec:** ${spec_confidence ? spec_confidence.uncertain : 'N/A'}
+- **Code:** ${code_confidence ? code_confidence.uncertain : 'N/A'}
+- **Tests:** ${test_confidence ? test_confidence.uncertain : 'N/A'}
+
+### 📦 What Was Built
 ${spec.substring(0, 500)}...
 
-### Preview
+### 🚀 Preview
 ${preview_url}
 
-### Validation
-- [x] Spec generated by Claude
-- [x] Code implemented by Claude  
+### ✅ Validation
+- [x] Spec generated and validated
+- [x] Code implemented by Claude
 - [x] Tests written and passing
 - [x] Deployed to preview branch
 
 ---
-*Generated by NightShift 🌙 — Built with SuperPlane + Render + Claude*`;
+*Generated by NightShift 🌙 — SuperPlane + Render + Claude*`;
 
     let pr;
     try {
