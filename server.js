@@ -44,7 +44,7 @@ SUMMARY: (one sentence overall assessment)`
       }]
     });
 
-    const text = message.content[0].text;
+    const text = message.content?.[0]?.text || "";
     const scoreMatch = text.match(/SCORE:\s*(\d+)/);
     const riskMatch = text.match(/RISK:\s*(LOW|MEDIUM|HIGH)/);
     const uncertainMatch = text.match(/UNCERTAIN:\s*(.+)/);
@@ -161,7 +161,7 @@ Write a structured technical spec with these sections:
 Be specific and practical.`
       }]
     });
-    const spec = message.content[0].text;
+    const spec = message.content?.[0]?.text || "";
     if (spec.split(' ').length < 50) {
       return res.status(400).json({
         success: false, error: 'Spec too short'
@@ -174,18 +174,23 @@ Be specific and practical.`
     );
 
     // Truncate spec to stay under SuperPlane's 64KB limit
-const truncatedSpec = spec.substring(0, 8000);
+// Keep only what downstream stages need
+const truncatedSpec = spec.substring(0, 4000);
 
-    res.json({
-        success: true, stage: 'spec',
-        data: {
-            spec: truncatedSpec,
-            confidence
-        }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+res.json({
+  success: true,
+  stage: 'spec',
+  data: {
+    spec: truncatedSpec,
+    confidence: {
+      score: confidence.score,
+      risk: confidence.risk,
+      summary: confidence.summary.substring(0, 100),
+      assumption: confidence.assumption.substring(0, 100),
+      uncertain: confidence.uncertain.substring(0, 100)
+    }
   }
+});
 });
 
 // ─────────────────────────────────────────
@@ -218,7 +223,7 @@ DEPENDENCIES:
 list npm packages needed`
       }]
     });
-    const response = message.content[0].text;
+    const response = message.content?.[0]?.text || "";
     const filenameMatch = response.match(/FILENAME:\s*(.+)/);
     const codeMatch = response.match(/```[\w]*\n([\s\S]+?)```/);
     const depsMatch = response.match(/DEPENDENCIES:\n(.+)/s);
@@ -239,17 +244,22 @@ list npm packages needed`
     );
 
     res.json({
-        success: true, stage: 'code',
-        data: {
-            filename: codeOutput.filename,
-            code: codeOutput.code.substring(0, 10000),
-            dependencies: codeOutput.dependencies,
-            confidence
-        }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  success: true,
+  stage: 'code',
+  data: {
+    filename: codeOutput.filename,
+    code: codeOutput.code.substring(0, 5000),
+    dependencies: codeOutput.dependencies
+      .substring(0, 200),
+    confidence: {
+      score: confidence.score,
+      risk: confidence.risk,
+      summary: confidence.summary.substring(0, 100),
+      assumption: confidence.assumption.substring(0, 100),
+      uncertain: confidence.uncertain.substring(0, 100)
+    }
   }
+});
 });
 
 // ─────────────────────────────────────────
@@ -295,20 +305,22 @@ TEST_COUNT: number`
     );
 
     res.json({
-        success: true, stage: 'test',
-        data: {
-            tests: testOutput.tests.substring(0, 8000),
-            test_count: testOutput.test_count,
-            tests_passed: true,
-            message: 'Tests generated successfully',
-            confidence
-        }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  success: true,
+  stage: 'test',
+  data: {
+    tests: testOutput.tests.substring(0, 3000),
+    test_count: testOutput.test_count,
+    tests_passed: true,
+    confidence: {
+      score: confidence.score,
+      risk: confidence.risk,
+      summary: confidence.summary.substring(0, 100),
+      assumption: confidence.assumption.substring(0, 100),
+      uncertain: confidence.uncertain.substring(0, 100)
+    }
   }
 });
-
+});
 // ─────────────────────────────────────────
 // STAGE 5 — DEPLOY
 // ─────────────────────────────────────────
@@ -379,21 +391,15 @@ app.post('/deploy', async (req, res) => {
     );
 
     res.json({
-      success: true, stage: 'deploy',
-      data: {
-        branch,
-        files_pushed: [
-          `nightshift/${filename}`,
-          `nightshift/${testFilename}`
-        ],
-        preview_url:
-          `https://github.com/${owner}/${repo}/tree/${branch}`,
-        message: 'Code deployed to GitHub branch successfully'
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+  success: true,
+  stage: 'deploy',
+  data: {
+    branch,
+    preview_url:
+      `https://github.com/${owner}/${repo}/tree/${branch}`,
+    message: 'Deployed successfully'
   }
+});
 });
 
 // ─────────────────────────────────────────
