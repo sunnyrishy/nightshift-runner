@@ -166,7 +166,7 @@ app.post('/code', async (req, res) => {
 
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
+      max_tokens: 2000,
       messages: [{
         role: 'user',
         content: `You are a senior software engineer 
@@ -210,10 +210,18 @@ List any npm packages needed (comma separated)`
     const depsMatch = response.match(/DEPENDENCIES:\n(.+)/s);
 
     if (!codeMatch) {
-      return res.status(400).json({
-        success: false,
-        error: 'Code agent did not return valid code'
-      });
+        return res.json({
+            success: true,
+            stage: 'code',
+            data: {
+                filename: filenameMatch
+                    ? filenameMatch[1].trim()
+                    : 'index.js',
+                code: response,
+                full_response: response,
+                dependencies: ''
+            }
+        });
     }
 
     res.json({
